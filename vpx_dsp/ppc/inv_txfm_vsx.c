@@ -76,6 +76,11 @@ static int16x8_t cospi29_v = { 2404, 2404, 2404, 2404, 2404, 2404, 2404, 2404 };
 static int16x8_t cospi30_v = { 1606, 1606, 1606, 1606, 1606, 1606, 1606, 1606 };
 static int16x8_t cospi31_v = { 804, 804, 804, 804, 804, 804, 804, 804 };
 
+static const int16x8_t sinpi_1_9_v = { 5283, 5283, 5283, 5283, 5283, 5283, 5283, 5283 };
+static const int16x8_t sinpi_2_9_v = { 9929, 9929, 9929, 9929, 9929, 9929, 9929, 9929 };
+static const int16x8_t sinpi_3_9_v = { 13377, 13377, 13377, 13377, 13377, 13377, 13377, 13377 };
+static const int16x8_t sinpi_4_9_v = { 15212, 15212, 15212, 15212, 15212, 15212, 15212, 15212 };
+
 static uint8x16_t mask1 = { 0x0,  0x1,  0x2,  0x3,  0x4,  0x5,  0x6,  0x7,
                             0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17 };
 #define ROUND_SHIFT_INIT                                               \
@@ -1122,4 +1127,52 @@ void vpx_iwht4x4_16_add_vsx(const tran_low_t *input, uint8_t *dest,
   TRANSFORM_COLS;
 
   PACK_STORE(v_a, v_c);
+}
+
+void iadst4_vsx(int16x8_t *in) {
+    int16x8_t sinpi_1_3_v, sinpi_4_2_v, sinpi_2_3_v, sinpi_1_4_v, sinpi_12_n3_v;
+    int32x4_t v_v[5], u_v[4];
+    int32x4_t tr0, tr1;
+    int32x4_t zerov = vec_splat_s32(0);
+    int16x8_t zero16v = vec_splat_s16(0);
+    uint32x4_t shift16 = vec_sl(vec_splat_u32(8), vec_splat_u32(1));
+    ROUND_SHIFT_INIT;
+
+   sinpi_1_3_v   = vec_mergel(sinpi_1_9_v, sinpi_3_9_v);
+   sinpi_4_2_v   = vec_mergel(sinpi_4_9_v, sinpi_2_9_v);
+   sinpi_2_3_v   = vec_mergel(sinpi_2_9_v, sinpi_3_9_v);
+   sinpi_1_4_v   = vec_mergel(sinpi_1_9_v, sinpi_4_9_v);
+   sinpi_12_n3_v = vec_mergel(vec_add(sinpi_1_9_v, sinpi_2_9_v),
+                              vec_sub(zero16v, sinpi_3_9_v));
+
+    tr0 = vec_mergeh((int32x4_t)in[0], (int32x4_t)in[1]);
+    tr1 = vec_mergel((int32x4_t)in[0], (int32x4_t)in[1]);
+
+    in[0] = (int16x8_t)vec_mergeh(tr0, tr1);
+    in[1] = (int16x8_t)vec_mergel(tr0, tr1);
+
+    v_v[0] = vec_msum(in[0], sinpi_1_3_v, zerov);
+    v_v[1] = vec_msum(in[1], sinpi_4_2_v, zerov);
+    v_v[2] = vec_msum(in[0], sinpi_2_3_v, zerov);
+    v_v[3] = vec_msum(in[1], sinpi_1_4_v, zerov);
+    v_v[4] = vec_msum(in[0], sinpi_12_n3_v, zerov);
+
+    in[0] = vec_sub(in[0], in[1]);
+    in[1] = (int16x8_t)vec_sra((int32x4_t)in[1], shift16);
+    in[0] = vec_add(in[0], in[1]);
+    in[0] = (int16x8_t)vec_sl((int32x4_t)in[0], shift16);
+
+    u_v[0] = vec_add(v_v[0], v_v[1]);
+    u_v[1] = vec_sub(v_v[2], v_v[3]);
+    u_v[2] = vec_msum(in[0], sinpi_1_3_v, zerov);
+    u_v[3] = vec_sub(v_v[1], v_v[3]);
+    u_v[3] = vec_add(u_v[3], v_v[4]);
+
+    DCT_CONST_ROUND_SHIFT(u_v[0]);
+    DCT_CONST_ROUND_SHIFT(u_v[1]);
+    DCT_CONST_ROUND_SHIFT(u_v[2]);
+    DCT_CONST_ROUND_SHIFT(u_v[3]);
+
+    in[0] = vec_packs(u_v[0], u_v[1]);
+    in[1] = vec_packs(u_v[2], u_v[3]);
 }
